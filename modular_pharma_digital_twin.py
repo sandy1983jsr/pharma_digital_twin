@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Pharma Digital Twin - What-If Analysis", layout="wide")
-st.title("💊 Pharma Formulation Unit Digital Twin – What-If Scenario Analysis")
+st.set_page_config(page_title="Pharma Digital Twin – SCADA, Sequencing, What-If & Optimization", layout="wide")
+st.title("Company ABC - Pharma Formulation Unit Digital Twin – SCADA Data, Sequencing, What-If & Optimization")
 
-# Emission factors (editable in sidebar)
+# --- Emission Factors (editable)
 st.sidebar.header("Emission Factors (kgCO2e/unit)")
 ef_energy = st.sidebar.number_input("Energy (per kWh)", value=0.9)
 ef_steam = st.sidebar.number_input("Steam (per kg)", value=0.07)
@@ -37,126 +37,134 @@ emission_factors = {
     "compressed_air": ef_compressed_air,
 }
 
-# What-if controls – Process Parameters
-st.sidebar.header("Process Parameters (What-If)")
-n_batches = st.sidebar.slider("Number of Batches", 10, 200, 100)
-batch_size = st.sidebar.slider("Batch Size (kg)", 50, 300, 100)
-energy_efficiency = st.sidebar.slider("Energy Efficiency Improvement (%)", 50, 110, 100) / 100
-steam_efficiency = st.sidebar.slider("Steam Efficiency Improvement (%)", 50, 110, 100) / 100
-hvac_efficiency = st.sidebar.slider("HVAC Efficiency (%)", 50, 110, 100) / 100
+# --- Data Source Selection
+st.sidebar.header("Data Source")
+data_mode = st.sidebar.radio("Choose Data Source", ["Sample Data", "Upload SCADA CSV"])
+uploaded_file = st.sidebar.file_uploader("Upload SCADA CSV", type=["csv"]) if data_mode == "Upload SCADA CSV" else None
 
-# What-if controls – Material Use
+# --- What-if & Optimization Controls
+st.sidebar.header("What-If/Optimization Controls")
+n_batches = st.sidebar.slider("Number of Batches (sample data only)", 10, 200, 100)
+batch_size = st.sidebar.slider("Batch Size (kg, sample data only)", 50, 300, 100)
+energy_efficiency = st.sidebar.slider("Energy Efficiency (%)", 50, 110, 100) / 100
+steam_efficiency = st.sidebar.slider("Steam Efficiency (%)", 50, 110, 100) / 100
+hvac_efficiency = st.sidebar.slider("HVAC Efficiency (%)", 50, 110, 100) / 100
 lactose_mult = st.sidebar.slider("Lactose Usage Multiplier", 0.8, 1.2, 1.0)
 ethanol_mult = st.sidebar.slider("Ethanol Usage Multiplier", 0.8, 1.2, 1.0)
 gelatin_mult = st.sidebar.slider("Gelatin Usage Multiplier", 0.8, 1.2, 1.0)
 api_mult = st.sidebar.slider("API Usage Multiplier", 0.8, 1.2, 1.0)
 solvent_mult = st.sidebar.slider("Solvent Usage Multiplier", 0.8, 1.2, 1.0)
-
-# What-if controls – Product Mix
-st.sidebar.header("Product Mix")
 pct_tablet = st.sidebar.slider("Tablets (%)", 0, 100, 50)
 pct_inhaler = st.sidebar.slider("Inhalers (%)", 0, 100 - pct_tablet, 30)
 pct_other = 100 - pct_tablet - pct_inhaler
 product_mix = {"tablet": pct_tablet, "inhaler": pct_inhaler, "other": pct_other}
-
-# What-if controls – Scheduling & Cleaning
-st.sidebar.header("Scheduling & Cleaning")
 cleaning_freq = st.sidebar.slider("Cleaning Frequency (per batch)", 0.2, 1.0, 0.5)
-changeover_penalty = st.sidebar.slider("Changeover Penalty (extra cleaning energy multiplier)", 1.0, 2.0, 1.2)
-
-# What-if controls – Regulatory/Cost
-st.sidebar.header("Regulatory & Cost")
+changeover_penalty = st.sidebar.slider("Changeover Cleaning Penalty", 1.0, 2.0, 1.2)
 carbon_price = st.sidebar.slider("Carbon Price ($/ton CO2e)", 0, 200, 50)
+optimize_sequence = st.sidebar.checkbox("Optimize Batch Sequence (minimize changeovers)")
 
-# Generate synthetic batch data based on current what-if parameters
-np.random.seed(42)
-data = []
-for i in range(n_batches):
-    # Simulate product mix
-    r = np.random.rand() * 100
-    if r < product_mix["tablet"]:
-        product = "tablet"
-        lactose_kg = np.random.normal(80, 8) * lactose_mult
-        ethanol_kg = np.random.normal(10, 2) * ethanol_mult
-        gelatin_kg = np.random.normal(10, 2) * gelatin_mult
-        api_kg = np.random.normal(7, 1.5) * api_mult
-        solvent_kg = np.random.normal(2, 0.5) * solvent_mult
-        packaging_kg = np.random.normal(5, 0.7)
-    elif r < product_mix["tablet"] + product_mix["inhaler"]:
-        product = "inhaler"
-        lactose_kg = np.random.normal(30, 5) * lactose_mult
-        ethanol_kg = np.random.normal(25, 4) * ethanol_mult
-        gelatin_kg = np.random.normal(7, 1) * gelatin_mult
-        api_kg = np.random.normal(4, 1) * api_mult
-        solvent_kg = np.random.normal(15, 2) * solvent_mult
-        packaging_kg = np.random.normal(8, 1.5)
-    else:
-        product = "other"
-        lactose_kg = np.random.normal(60, 10) * lactose_mult
-        ethanol_kg = np.random.normal(15, 3) * ethanol_mult
-        gelatin_kg = np.random.normal(10, 2) * gelatin_mult
-        api_kg = np.random.normal(3, 1) * api_mult
-        solvent_kg = np.random.normal(5, 1) * solvent_mult
-        packaging_kg = np.random.normal(6, 0.8)
+# --- Data Load
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.success("SCADA data loaded!")
+    # Expect columns: Batch_ID, Product, Energy_kWh, Steam_kg, Lactose_kg, Ethanol_kg, etc.
+    if "Batch_ID" not in df.columns or "Product" not in df.columns:
+        st.error("CSV must include 'Batch_ID' and 'Product' columns!")
+else:
+    np.random.seed(42)
+    product_types = ["tablet", "inhaler", "other"]
+    batches = []
+    for i in range(n_batches):
+        r = np.random.rand() * 100
+        if r < product_mix["tablet"]:
+            product = "tablet"
+            lactose_kg = np.random.normal(80, 8) * lactose_mult
+            ethanol_kg = np.random.normal(10, 2) * ethanol_mult
+            gelatin_kg = np.random.normal(10, 2) * gelatin_mult
+            api_kg = np.random.normal(7, 1.5) * api_mult
+            solvent_kg = np.random.normal(2, 0.5) * solvent_mult
+            packaging_kg = np.random.normal(5, 0.7)
+        elif r < product_mix["tablet"] + product_mix["inhaler"]:
+            product = "inhaler"
+            lactose_kg = np.random.normal(30, 5) * lactose_mult
+            ethanol_kg = np.random.normal(25, 4) * ethanol_mult
+            gelatin_kg = np.random.normal(7, 1) * gelatin_mult
+            api_kg = np.random.normal(4, 1) * api_mult
+            solvent_kg = np.random.normal(15, 2) * solvent_mult
+            packaging_kg = np.random.normal(8, 1.5)
+        else:
+            product = "other"
+            lactose_kg = np.random.normal(60, 10) * lactose_mult
+            ethanol_kg = np.random.normal(15, 3) * ethanol_mult
+            gelatin_kg = np.random.normal(10, 2) * gelatin_mult
+            api_kg = np.random.normal(3, 1) * api_mult
+            solvent_kg = np.random.normal(5, 1) * solvent_mult
+            packaging_kg = np.random.normal(6, 0.8)
+        batches.append({
+            "Batch_ID": i + 1,
+            "Product": product,
+            "Energy_kWh": np.random.normal(1200, 100) * energy_efficiency,
+            "Steam_kg": np.random.normal(280, 40) * steam_efficiency,
+            "HVAC_kWh": np.random.normal(130, 15) * hvac_efficiency,
+            "Lactose_kg": lactose_kg,
+            "Ethanol_kg": ethanol_kg,
+            "Gelatin_kg": gelatin_kg,
+            "API_kg": api_kg,
+            "Solvent_kg": solvent_kg,
+            "Packaging_kg": packaging_kg,
+            "Filter_Media_kg": np.random.normal(3, 0.3),
+            "Cleaning_Agent_kg": np.random.normal(6, 0.8) * cleaning_freq,
+            "Wastewater_kg": np.random.normal(20, 2) * cleaning_freq,
+            "Compressed_Air_kWh": np.random.normal(8, 1),
+            "Cleaning_Energy_kWh": np.random.normal(40, 5) * cleaning_freq,
+        })
+    df = pd.DataFrame(batches)
 
-    batch_energy = np.random.normal(1200, 100) * energy_efficiency
-    batch_steam = np.random.normal(280, 40) * steam_efficiency
-    batch_hvac = np.random.normal(130, 15) * hvac_efficiency
-    filter_media_kg = np.random.normal(3, 0.3)
-    cleaning_agent_kg = np.random.normal(6, 0.8) * cleaning_freq
-    wastewater_kg = np.random.normal(20, 2) * cleaning_freq
-    compressed_air_kWh = np.random.normal(8, 1)
-    cleaning_energy = np.random.normal(40, 5) * cleaning_freq * changeover_penalty
+# --- Sequencing & Changeover logic
+df["Prev_Product"] = df["Product"].shift(1, fill_value=df["Product"].iloc[0])
+df["Changeover"] = (df["Product"] != df["Prev_Product"]).astype(int)
+df["Cleaning_Agent_kg"] *= (1 + (changeover_penalty - 1) * df["Changeover"])
 
-    data.append({
-        "Batch_ID": i + 1,
-        "Product": product,
-        "Energy_kWh": batch_energy,
-        "Steam_kg": batch_steam,
-        "HVAC_kWh": batch_hvac,
-        "Lactose_kg": lactose_kg,
-        "Ethanol_kg": ethanol_kg,
-        "Gelatin_kg": gelatin_kg,
-        "API_kg": api_kg,
-        "Solvent_kg": solvent_kg,
-        "Packaging_kg": packaging_kg,
-        "Filter_Media_kg": filter_media_kg,
-        "Cleaning_Agent_kg": cleaning_agent_kg,
-        "Wastewater_kg": wastewater_kg,
-        "Compressed_Air_kWh": compressed_air_kWh,
-        "Cleaning_Energy_kWh": cleaning_energy,
-    })
+# --- Optimization: Minimize changeovers
+if optimize_sequence:
+    # Simple optimization: group by product type (can use more advanced algos for real use)
+    df = df.sort_values("Product").reset_index(drop=True)
+    df["Batch_ID"] = range(1, len(df) + 1)
+    # Recalculate sequencing columns
+    df["Prev_Product"] = df["Product"].shift(1, fill_value=df["Product"].iloc[0])
+    df["Changeover"] = (df["Product"] != df["Prev_Product"]).astype(int)
+    df["Cleaning_Agent_kg"] = df["Cleaning_Agent_kg"].values * (1 + (changeover_penalty - 1) * df["Changeover"])
+    st.success("Batch sequence optimized to minimize changeovers!")
 
-df = pd.DataFrame(data)
-
-# GHG Emissions Calculation
+# --- GHG Emissions Calculation
 def calculate_ghg(row):
     ef = emission_factors
     ghg = (
-        row["Energy_kWh"] * ef["energy"] +
-        row["Steam_kg"] * ef["steam"] +
-        row["HVAC_kWh"] * ef["hvac"] +
-        row["Lactose_kg"] * ef["lactose"] +
-        row["Ethanol_kg"] * ef["ethanol"] +
-        row["Gelatin_kg"] * ef["gelatin"] +
-        row["API_kg"] * ef["api"] +
-        row["Solvent_kg"] * ef["solvent"] +
-        row["Packaging_kg"] * ef["packaging"] +
-        row["Filter_Media_kg"] * ef["filter_media"] +
-        row["Cleaning_Agent_kg"] * ef["cleaning_agent"] +
-        row["Wastewater_kg"] * ef["wastewater"] +
-        row["Compressed_Air_kWh"] * ef["compressed_air"] +
-        row["Cleaning_Energy_kWh"] * ef["energy"]
+        row.get("Energy_kWh",0) * ef["energy"] +
+        row.get("Steam_kg",0) * ef["steam"] +
+        row.get("HVAC_kWh",0) * ef["hvac"] +
+        row.get("Lactose_kg",0) * ef["lactose"] +
+        row.get("Ethanol_kg",0) * ef["ethanol"] +
+        row.get("Gelatin_kg",0) * ef["gelatin"] +
+        row.get("API_kg",0) * ef["api"] +
+        row.get("Solvent_kg",0) * ef["solvent"] +
+        row.get("Packaging_kg",0) * ef["packaging"] +
+        row.get("Filter_Media_kg",0) * ef["filter_media"] +
+        row.get("Cleaning_Agent_kg",0) * ef["cleaning_agent"] +
+        row.get("Wastewater_kg",0) * ef["wastewater"] +
+        row.get("Compressed_Air_kWh",0) * ef["compressed_air"] +
+        row.get("Cleaning_Energy_kWh",0) * ef["energy"]
     )
     return ghg
 
 df["GHG_kgCO2e"] = df.apply(calculate_ghg, axis=1)
 df["Carbon_Cost_$"] = df["GHG_kgCO2e"] / 1000 * carbon_price
 
-# Dashboard Outputs
-st.metric("Average GHG Emissions (kgCO2e/batch)", f"{df['GHG_kgCO2e'].mean():.2f}")
-st.metric("Total GHG Emissions (ton CO2e)", f"{df['GHG_kgCO2e'].sum()/1000:.2f}")
-st.metric("Total Carbon Cost ($)", f"{df['Carbon_Cost_$'].sum():.2f}")
+# --- Dashboard Outputs
+col1, col2, col3 = st.columns(3)
+col1.metric("Average GHG Emissions (kgCO2e/batch)", f"{df['GHG_kgCO2e'].mean():.2f}")
+col2.metric("Total GHG Emissions (ton CO2e)", f"{df['GHG_kgCO2e'].sum()/1000:.2f}")
+col3.metric("Total Carbon Cost ($)", f"{df['Carbon_Cost_$'].sum():.2f}")
 
 st.subheader("GHG Emissions by Batch")
 st.line_chart(df.set_index("Batch_ID")["GHG_kgCO2e"])
@@ -167,12 +175,14 @@ st.bar_chart(df.groupby("Product")["GHG_kgCO2e"].mean())
 st.subheader("Batch Data (first 20 rows)")
 st.dataframe(df.head(20).round(2))
 
+st.subheader("Changeover Analysis")
+st.write(f"Total changeovers: {df['Changeover'].sum()} (sequence impacts cleaning and emissions)")
+
 st.markdown("""
-**What-if analysis you can perform:**
-- Change process parameters (energy, steam, batch size, cleaning frequency)
-- Test material substitutions and usage levels
-- Adjust product mix (tablets/inhalers/other)
-- Test scheduling and cleaning strategies
-- Simulate regulatory changes (carbon price)
-- See impact on GHG emissions and cost
+- **Upload SCADA/process CSVs or use sample data**
+- **Model impact of batch/product sequencing on GHG/resource use**
+- **Visualize and optimize batch scheduling for cost and emissions**
+- **Use sidebar controls for what-if scenario analysis**
+- **All calculations update live with your choices and data**
+- ** Created by Sandeep Kumar Mohanty
 """)
